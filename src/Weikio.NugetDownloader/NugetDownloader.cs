@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NuGet.Common;
 using NuGet.Configuration;
 using NuGet.Frameworks;
@@ -41,27 +42,7 @@ namespace Weikio.NugetDownloader
             bool includeSecondaryRepositories = false, 
             string targetFramework = null,
             string targetRid = null,
-            bool filterOurRefFiles = true)
-        {
-            return await DownloadAsync(
-                packageFolder, 
-                packageName, 
-                packageVersion, 
-                includePrerelease, 
-                packageFeed, 
-                onlyDownload, 
-                includeSecondaryRepositories,
-                targetFramework, 
-                targetRid,
-                filterOurRefFiles, 
-                null);
-        }
-
-        public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string packageVersion = null,
-            bool includePrerelease = false,
-            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null,
-            string targetRid = null,
-            bool filterOurRefFiles = true, List<string> ignoredSources = null)
+            bool filterOurRefFiles = true, CancellationToken? cancel = null)
         {
             return await DownloadAsync(
                 packageFolder, 
@@ -75,15 +56,40 @@ namespace Weikio.NugetDownloader
                 targetRid,
                 filterOurRefFiles, 
                 null,
-                false);
+                cancel: cancel);
         }
 
         public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string packageVersion = null,
             bool includePrerelease = false,
             NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null,
             string targetRid = null,
-            bool filterOurRefFiles = true, List<string> ignoredSources = null, bool autoRetryOnFail = false)
+            bool filterOurRefFiles = true, List<string> ignoredSources = null, CancellationToken? cancel = null)
         {
+            return await DownloadAsync(
+                packageFolder, 
+                packageName, 
+                packageVersion, 
+                includePrerelease, 
+                packageFeed, 
+                onlyDownload, 
+                includeSecondaryRepositories,
+                targetFramework, 
+                targetRid,
+                filterOurRefFiles, 
+                null,
+                false,
+                cancel);
+        }
+
+        public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string packageVersion = null,
+            bool includePrerelease = false,
+            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null,
+            string targetRid = null,
+            bool filterOurRefFiles = true, List<string> ignoredSources = null, bool autoRetryOnFail = false,
+            CancellationToken? cancel = null)
+        {
+            var token = cancel ?? CancellationToken.None;
+            
             if (!Directory.Exists(packageFolder))
             {
                 Directory.CreateDirectory(packageFolder);
@@ -97,7 +103,7 @@ namespace Weikio.NugetDownloader
             IPackageSearchMetadata package = null;
             SourceRepository sourceRepo = null;
             
-            var packageResult = await GetPackage(packageName, packageVersion, includePrerelease, packageFeed, providers, sourceRepositoryProvider, false);
+            var packageResult = await GetPackage(packageName, packageVersion, includePrerelease, packageFeed, providers, sourceRepositoryProvider, false, cancel);
 
             package = packageResult.Item2;
             sourceRepo = packageResult.Item1;
@@ -106,7 +112,7 @@ namespace Weikio.NugetDownloader
             {
                 if (autoRetryOnFail)
                 {
-                    packageResult = await GetPackage(packageName, packageVersion, includePrerelease, packageFeed, providers, sourceRepositoryProvider, true);
+                    packageResult = await GetPackage(packageName, packageVersion, includePrerelease, packageFeed, providers, sourceRepositoryProvider, true, cancel);
 
                     package = packageResult.Item2;
                     sourceRepo = packageResult.Item1;
@@ -177,11 +183,11 @@ namespace Weikio.NugetDownloader
                 downloadContext,
                 sourceRepo,
                 secondaryRepos,
-                CancellationToken.None);
+                token);
 
-            await project.PostProcessAsync(projectContext, CancellationToken.None);
-            await project.PreProcessAsync(projectContext, CancellationToken.None);
-            await packageManager.RestorePackageAsync(package.Identity, projectContext, downloadContext, new[] { sourceRepo }, CancellationToken.None);
+            await project.PostProcessAsync(projectContext, token);
+            await project.PreProcessAsync(projectContext, token);
+            await packageManager.RestorePackageAsync(package.Identity, projectContext, downloadContext, new[] { sourceRepo }, token);
 
             var result = new NugetDownloadResult
             {
@@ -209,8 +215,9 @@ namespace Weikio.NugetDownloader
         }
 
         private async Task<(SourceRepository, IPackageSearchMetadata)> GetPackage(string packageName, string packageVersion, bool includePrerelease, NuGetFeed packageFeed, List<Lazy<INuGetResourceProvider>> providers,
-            SourceRepositoryProvider sourceRepositoryProvider, bool forceRefresh)
+            SourceRepositoryProvider sourceRepositoryProvider, bool forceRefresh, CancellationToken? cancel = null)
         {
+            var token = cancel ?? CancellationToken.None;
             IPackageSearchMetadata package = null;
             SourceRepository sourceRepo = null;
             
@@ -218,7 +225,7 @@ namespace Weikio.NugetDownloader
             {
                 sourceRepo = GetSourceRepo(packageFeed, providers);
 
-                package = await SearchPackageAsync(packageName, packageVersion, includePrerelease, sourceRepo, forceRefresh);
+                package = await SearchPackageAsync(packageName, packageVersion, includePrerelease, sourceRepo, forceRefresh, token);
             }
             else
             {
@@ -244,8 +251,9 @@ namespace Weikio.NugetDownloader
         }
 
         public async Task<string[]> DownloadAsync(IPackageSearchMetadata packageIdentity, SourceRepository repository,
-            string downloadFolder, bool onlyDownload = false)
+            string downloadFolder, bool onlyDownload = false, CancellationToken? cancel = null)
         {
+            var token = cancel ?? CancellationToken.None;
             if (packageIdentity == null)
             {
                 throw new ArgumentNullException(nameof(packageIdentity));
@@ -301,7 +309,7 @@ namespace Weikio.NugetDownloader
                 downloadContext,
                 repository,
                 new List<SourceRepository>(),
-                CancellationToken.None);
+                token);
 
             var versionFolder = Path.Combine(downloadFolder, packageIdentity.Identity.ToString());
 
@@ -334,8 +342,9 @@ namespace Weikio.NugetDownloader
         public async IAsyncEnumerable<(SourceRepository Repository, IPackageSearchMetadata Package)> SearchPackagesAsync(string searchTerm,
             int maxResults = 128,
             bool includePrerelease = false,
-            string nugetConfigFilePath = "")
+            string nugetConfigFilePath = "", CancellationToken? cancel = null)
         {
+            var token = cancel ?? CancellationToken.None;
             var providers = GetNugetResourceProviders();
 
             var packageRootFolder = "";
@@ -376,7 +385,7 @@ namespace Weikio.NugetDownloader
                     searchFilter = new SearchFilter(includePrerelease);
                 }
 
-                var items = await packageSearchResource.SearchAsync(searchTerm, searchFilter, 0, maxResults, _logger, CancellationToken.None);
+                var items = await packageSearchResource.SearchAsync(searchTerm, searchFilter, 0, maxResults, _logger, token);
 
                 foreach (var packageSearchMetadata in items)
                 {
@@ -387,8 +396,9 @@ namespace Weikio.NugetDownloader
 
         public async Task<IEnumerable<(SourceRepository Repository, IPackageSearchMetadata Package)>> SearchPackagesAsync(NuGetFeed packageFeed,
             string searchTerm, int maxResults = 128,
-            bool includePrerelease = false)
+            bool includePrerelease = false, CancellationToken? cancel = null)
         {
+            var token = cancel ?? CancellationToken.None;
             var providers = GetNugetResourceProviders();
             var sourceRepo = GetSourceRepo(packageFeed, providers);
             var packageSearchResource = await sourceRepo.GetResourceAsync<PackageSearchResource>();
@@ -404,14 +414,15 @@ namespace Weikio.NugetDownloader
                 searchFilter = new SearchFilter(includePrerelease);
             }
 
-            var packages = await packageSearchResource.SearchAsync(searchTerm, searchFilter, 0, maxResults, _logger, CancellationToken.None);
+            var packages = await packageSearchResource.SearchAsync(searchTerm, searchFilter, 0, maxResults, _logger, token);
 
             return packages.Select(x => (sourceRepo, x));
         }
 
         private async Task<IPackageSearchMetadata> SearchPackageAsync(string packageName, string version, bool includePrerelease,
-            SourceRepository sourceRepository, bool forceRefresh)
+            SourceRepository sourceRepository, bool forceRefresh, CancellationToken? cancel = null)
         {
+            var token = cancel ?? CancellationToken.None;
             var packageMetadataResource = await sourceRepository.GetResourceAsync<PackageMetadataResource>();
             var sourceCacheContext = new SourceCacheContext();
 
@@ -432,7 +443,7 @@ namespace Weikio.NugetDownloader
                         packageIdentity,
                         sourceCacheContext,
                         _logger,
-                        CancellationToken.None);
+                        token);
                 }
             }
             else
@@ -443,7 +454,7 @@ namespace Weikio.NugetDownloader
                     includeUnlisted: false,
                     sourceCacheContext,
                     _logger,
-                    CancellationToken.None);
+                    token);
 
                 searchResults = searchResults
                     .OrderByDescending(p => p.Identity.Version);
